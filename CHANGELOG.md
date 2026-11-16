@@ -9,6 +9,21 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Search on the Conversations tab.** A search box above the filters finds
+  conversations by name, company, email address, or any word in the cold
+  emails, the replies, Sellbird's answers and a draft waiting for you. Every
+  word typed has to match, and each filter's count shows how many matches it
+  holds.
+- **"Review in Outbox" opens that draft.** The button on a conversation's
+  waiting reply used to open the Outbox on its first email; it now lands on
+  that conversation's draft. An edit in progress in the Outbox is kept.
+- **Search in the Outbox.** A search box above the review desk narrows the
+  emails waiting for you and the scheduled, sent and didn't-send lists below
+  it, by recipient, company, contact, subject, body, campaign or why Sellbird
+  held an email. Press `/` to jump to it. "Approve all" is hidden while a
+  search is on, since it approves the whole queue, not only what's shown.
+  "Review in Outbox" clears the search so the draft it opens is visible.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no
