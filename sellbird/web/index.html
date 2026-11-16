@@ -280,11 +280,19 @@
     <div>
       <h2>Outbox</h2>
       <p>Emails waiting for you. Read one, decide, move on &mdash;
-         <kbd>A</kbd> approve, <kbd>R</kbd> reject, <kbd>E</kbd> edit, <kbd>J</kbd>/<kbd>K</kbd> to move.</p>
+         <kbd>A</kbd> approve, <kbd>R</kbd> reject, <kbd>E</kbd> edit, <kbd>J</kbd>/<kbd>K</kbd> to move, <kbd>/</kbd> to search.</p>
     </div>
     <div class="page-actions" id="outbox-actions"></div>
   </div>
   <div id="outbox-banner"></div>
+  <div class="toolbar">
+    <label class="search"><svg class="icon" aria-hidden="true"><use href="#i-discover"/></svg>
+      <input class="form-input" id="outbox-search" type="search" placeholder="Search" autocomplete="off"
+             aria-label="Search the Outbox by recipient, company, subject or text"
+             aria-describedby="outbox-search-n" oninput="setOutboxQuery(this.value)"
+             onkeydown="searchEscape(event, setOutboxQuery)">
+      <span class="search-count" id="outbox-search-n" role="status"></span></label>
+  </div>
   <div id="outbox-desk"></div>
   <div id="outbox-list"></div>
 </div>

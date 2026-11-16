@@ -2,7 +2,8 @@ let currentTab = 'today';
 let companyDrill = false;      // true while viewing a single company's contacts
 let _companies = [], _prospects = [], _campaigns = [];
 let _signals = null;           // last /api/signals payload, for the cohort builder
-let _desk = { items: [], i: 0 };
+let _desk = { items: [], all: [], i: 0, focus: null };  // focus: a draft id to open on next load
+let _outboxData = null, _outboxQuery = '';
 
 // ── Appearance ──
 //
@@ -1634,7 +1635,6 @@ async function loadOutbox() {
   const banner = document.getElementById('outbox-banner');
   const desk = document.getElementById('outbox-desk');
   const list = document.getElementById('outbox-list');
-  const actions = document.getElementById('outbox-actions');
   if (!data) { desk.innerHTML = offlineState(); list.innerHTML = ''; return; }
   if (data.error) {
     // Never let a failed read pass for "Nothing to review".
@@ -1644,29 +1644,10 @@ async function loadOutbox() {
   }
 
   const pending = data.pending || [];
-  _desk.items = pending;
+  _outboxData = data;
+  _desk.all = pending;
   _desk.footer = data.footer || '';
-  // Keep the desk on the draft being edited even if the list shifted.
-  const editingAt = _desk.editing ? pending.findIndex(p => p.id === _desk.editing) : -1;
-  if (editingAt >= 0) _desk.i = editingAt;
-  else if (_desk.editing) {
-    _desk.editing = null;
-    _desk.unsaved = null;
-  }
-  if (_desk.i >= pending.length) _desk.i = Math.max(0, pending.length - 1);
   navCount('nav-outbox', pending.length);
-
-  actions.innerHTML =
-    (pending.length && !data.paused
-      ? (pending.length > pending.filter(p => heldReason(p)).length
-        ? '<button class="btn btn-primary btn-sm" onclick="outboxApproveAll()" ' +
-          'title="Emails Sellbird held are left for you to approve one by one">Approve all ' +
-          (pending.length - pending.filter(p => heldReason(p)).length) + '</button>' : '') : '') +
-    (data.paused
-      ? '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'resume\')">' +
-        'Resume sending</button>'
-      : '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'pause\')">' +
-        'Pause all sending</button>');
 
   // The kill switch gets a banner only when it's actually on — a permanent
   // bar for a thing that isn't happening is just noise.
@@ -1681,8 +1662,75 @@ async function loadOutbox() {
       '<div class="banner wait">' + icon('alert') + '<div><b>Add your postal address</b>' +
         '<p>' + escHtml(data.compliance_notice) + '</p></div></div>';
   }
+  paintOutbox();
+}
 
-  desk.innerHTML = pending.length ? renderDesk(pending, _desk.i) :
+// Every word typed must appear somewhere in the email or who it's to: the
+// address, subject, body, company, contact, website, campaign, or why it was held.
+function outboxMatches(item, query) {
+  const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const ctx = item.context || {};
+  const text = [item.to_email, item.subject, item.body, item.error, item.status,
+    item.kind === 'reply' ? 'reply' : '', ctx.company, ctx.contact, ctx.contact_title,
+    ctx.website, ctx.campaign, ctx.description]
+    .filter(Boolean).join('\n').toLowerCase();
+  return words.every(w => text.includes(w));
+}
+
+function setOutboxQuery(q) {
+  _outboxQuery = q;
+  if (!_desk.editing) _desk.i = 0;
+  paintOutbox();
+}
+
+// Draws the desk, its buttons and the lists below from the last load, with
+// the search applied. Searching narrows what's shown; it never changes the queue.
+function paintOutbox() {
+  const data = _outboxData;
+  if (!data) return;
+  const actions = document.getElementById('outbox-actions');
+  const searching = !!_outboxQuery.trim();
+  // A draft being edited stays on the desk even if it stops matching.
+  const pending = _desk.all.filter(p => p.id === _desk.editing || outboxMatches(p, _outboxQuery));
+  _desk.items = pending;
+  const counter = document.getElementById('outbox-search-n');
+  if (counter) counter.textContent = searching
+    ? pending.length + ' of ' + _desk.all.length : '';
+  // Keep the desk on the draft being edited even if the list shifted.
+  const editingAt = _desk.editing ? pending.findIndex(p => p.id === _desk.editing) : -1;
+  if (editingAt >= 0) _desk.i = editingAt;
+  else if (_desk.editing) {
+    _desk.editing = null;
+    _desk.unsaved = null;
+  }
+  if (_desk.focus && !_desk.editing) {
+    // Opened from "Review in Outbox": land on that draft, not the first one.
+    const at = pending.findIndex(p => p.id === _desk.focus);
+    if (at >= 0) _desk.i = at;
+    else showToast('That draft is no longer waiting. It may have been approved or rejected already.', 'info');
+  }
+  _desk.focus = null;
+  if (_desk.i >= pending.length) _desk.i = Math.max(0, pending.length - 1);
+
+  // Approve all approves the whole queue, so it's hidden while a search
+  // shows only part of it: you'd be approving emails you can't see.
+  actions.innerHTML =
+    (pending.length && !data.paused && !searching
+      ? (pending.length > pending.filter(p => heldReason(p)).length
+        ? '<button class="btn btn-primary btn-sm" onclick="outboxApproveAll()" ' +
+          'title="Emails Sellbird held are left for you to approve one by one">Approve all ' +
+          (pending.length - pending.filter(p => heldReason(p)).length) + '</button>' : '') : '') +
+    (data.paused
+      ? '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'resume\')">' +
+        'Resume sending</button>'
+      : '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'pause\')">' +
+        'Pause all sending</button>');
+
+  document.getElementById('outbox-desk').innerHTML = pending.length ? renderDesk(pending, _desk.i) :
+    searching && _desk.all.length
+      ? '<div class="card">' + emptyState(icon('discover'), 'No waiting emails match',
+          'Try different words. Matches further along are in the lists below.') + '</div>' :
     '<div class="card">' + emptyState(icon('check'), 'Nothing to review',
       _sendingMode && _sendingMode.mode === 'autopilot'
         ? 'Autopilot is on, so Sellbird sends on its own. Anything it holds for you shows up here.'
@@ -1700,20 +1748,36 @@ async function loadOutbox() {
     }
     return h + '</tbody></table></div>';
   };
+  // The search narrows these lists too: scheduled, sent and didn't-send.
+  const found = rows => (rows || []).filter(r => outboxMatches(r, _outboxQuery));
 
-  list.innerHTML =
-    table('Approved &amp; scheduled', data.approved, [
+  document.getElementById('outbox-list').innerHTML =
+    table('Approved &amp; scheduled', found(data.approved), [
       ['To', r => r.to_email], ['Step', r => r.step], ['Subject', r => r.subject],
       ['Sends', r => r.status === 'sending' ? badge(r.status) : escHtml(formatDate(r.send_at)), true, true],
     ]) +
-    table('Recently sent', data.sent, [
+    table('Recently sent', found(data.sent), [
       ['To', r => r.to_email], ['Step', r => r.step], ['Subject', r => r.subject],
       ['Sent', r => formatDate(r.sent_at), true],
     ]) +
-    table('Didn\'t send', data.failed, [
+    table('Didn\'t send', found(data.failed), [
       ['To', r => r.to_email], ['Status', r => badge(r.status), false, true],
       ['Reason', r => r.error, true], ['Updated', r => formatDate(r.updated_at), true],
     ]);
+}
+
+// From a conversation: open the Outbox on that conversation's drafted reply.
+// An edit in progress wins: the desk stays on it rather than dropping your changes.
+function reviewDraft(id) {
+  if (_desk.editing && _desk.editing !== id) showToast('Save or cancel your edit first.', 'error');
+  else {
+    _desk.focus = id;
+    // A search left on the Outbox could hide the draft you came to see.
+    _outboxQuery = '';
+    const box = document.getElementById('outbox-search');
+    if (box) box.value = '';
+  }
+  goTab('outbox');
 }
 
 const CONTACT_SOURCES = {
@@ -1997,7 +2061,8 @@ document.addEventListener('keydown', e => {
   if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
   const cur = _desk.items[_desk.i];
   const k = e.key.toLowerCase();
-  if (k === 'j') { e.preventDefault(); deskGo(_desk.i + 1); }
+  if (e.key === '/') { e.preventDefault(); document.getElementById('outbox-search').focus(); }
+  else if (k === 'j') { e.preventDefault(); deskGo(_desk.i + 1); }
   else if (k === 'k') { e.preventDefault(); deskGo(_desk.i - 1); }
   else if (k === 'a' && cur) { e.preventDefault(); outboxAct(cur.id, 'approve'); }
   else if (k === 'r' && cur) { e.preventDefault(); outboxAct(cur.id, 'reject'); }
@@ -2212,8 +2277,8 @@ async function loadProspects() {
   if (!document.getElementById('contact-rows')) {
     el.innerHTML = '<div class="toolbar">' +
       '<label class="search">' + icon('discover') +
-        '<input class="form-input" id="contact-search" type="search" placeholder="Search name, company, email" ' +
-        'aria-label="Search contacts" oninput="_contactQuery=this.value;renderContacts()"></label>' +
+        '<input class="form-input" id="contact-search" type="search" placeholder="Search" autocomplete="off" ' +
+        'aria-label="Search contacts by name, company or email" oninput="_contactQuery=this.value;renderContacts()"></label>' +
       '<div class="segmented" id="contact-filters" role="group" aria-label="Filter by status"></div>' +
       '</div><div id="contact-rows"></div>';
     // A rebuild after an offline blip must show the search still applied.
@@ -2532,7 +2597,7 @@ async function loadCampaigns() {
 
 // The whole exchange in order: Sellbird's cold emails (from the Outbox), the
 // replies, Sellbird's answers, and any answer still waiting for approval.
-let _convos = [], _convoFilter = 'needs';
+let _convos = [], _convoFilter = 'needs', _convoQuery = '';
 const STAGE_LABELS = {
   initial_outreach: 'Outreach', engaged: 'Engaged', qualifying: 'Qualifying', presenting: 'Presenting',
   negotiating: 'Negotiating', closing: 'Closing', closed_won: 'Won', closed_lost: 'Lost',
@@ -2558,28 +2623,71 @@ async function loadConversations() {
   // Open on "Needs you" only when something needs you.
   if (_convoFilter === 'needs' && !data.some(CONVO_FILTERS[0][2]))
     _convoFilter = data.some(CONVO_FILTERS[1][2]) ? 'open' : 'all';
+  // Built once, so typing in the search box never loses focus.
+  if (!document.getElementById('convo-rows')) {
+    el.innerHTML = '<div class="toolbar"><label class="search">' + icon('discover') +
+      '<input class="form-input" id="convo-search" type="search" ' +
+      'placeholder="Search" autocomplete="off" ' +
+      'aria-label="Search conversations by name, company, email or message" ' +
+      'oninput="setConvoQuery(this.value)" onkeydown="searchEscape(event, setConvoQuery)"></label>' +
+      '<div class="segmented" id="convo-filters" role="group" aria-label="Filter conversations"></div></div>' +
+      '<div id="convo-rows"></div>';
+    // A rebuild after an offline blip must show the search still applied.
+    document.getElementById('convo-search').value = _convoQuery;
+  }
   renderConversations();
 }
 
 function setConvoFilter(f) { _convoFilter = f; renderConversations(); }
 
+function setConvoQuery(q) { _convoQuery = q; renderConversations(); }
+
+// Esc clears a search box (it stands in for the browser's own clear button).
+function searchEscape(e, apply) {
+  if (e.key !== 'Escape' || !e.target.value) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.target.value = '';
+  apply('');
+}
+
+// Every word typed must appear somewhere in the conversation: who it's with,
+// the cold emails, every reply and answer, and any draft waiting for you.
+function convoMatches(c, query) {
+  const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const text = [c.first_name, c.last_name, c.company, c.prospect_email, c.intent, c.stage, c.status,
+    ...(c.emails || []).flatMap(e => [e.subject, e.body]),
+    ...(c.thread || []).map(m => m.content),
+    ...(c.draft ? [c.draft.subject, c.draft.body] : [])]
+    .filter(Boolean).join('\n').toLowerCase();
+  return words.every(w => text.includes(w));
+}
+
 function renderConversations() {
-  const el = document.getElementById('conversations-list');
+  const rowsEl = document.getElementById('convo-rows');
+  const filtersEl = document.getElementById('convo-filters');
+  if (!rowsEl || !filtersEl) return;
   const filter = CONVO_FILTERS.find(f => f[0] === _convoFilter) || CONVO_FILTERS[CONVO_FILTERS.length - 1];
-  const bar = '<div class="toolbar"><div class="segmented" role="group" aria-label="Filter conversations">' +
-    CONVO_FILTERS.map(f => '<button class="' + (f[0] === filter[0] ? 'on' : '') + '" aria-pressed="' + (f[0] === filter[0]) +
-      '" onclick="setConvoFilter(\'' + f[0] + '\')">' + f[1] + ' <span class="n">' +
-      _convos.filter(f[2]).length + '</span></button>').join('') + '</div></div>';
+  // The counts follow the search, so each filter says how many matches it holds.
+  const found = _convos.filter(c => convoMatches(c, _convoQuery));
+  filtersEl.innerHTML = CONVO_FILTERS.map(f => '<button class="' + (f[0] === filter[0] ? 'on' : '') +
+    '" aria-pressed="' + (f[0] === filter[0]) + '" onclick="setConvoFilter(\'' + f[0] + '\')">' + f[1] +
+    ' <span class="n">' + found.filter(f[2]).length + '</span></button>').join('');
   // Handed-to-you first, then drafts waiting; otherwise newest first (as served).
   const rank = c => c.status === 'needs_human' ? 0 : c.draft ? 1 : 2;
-  const shown = _convos.filter(filter[2]).map((c, i) => [c, i])
+  const shown = found.filter(filter[2]).map((c, i) => [c, i])
     .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
   if (!shown.length) {
-    el.innerHTML = bar + '<div class="card">' + emptyState(icon('check'), 'Nothing here',
-      'No conversation matches this filter.') + '</div>';
+    // Say why it's empty: a search that matched nothing, or matches hidden by the filter.
+    const elsewhere = _convoQuery.trim() && found.length;
+    rowsEl.innerHTML = '<div class="card">' + (_convoQuery.trim()
+      ? emptyState(icon('discover'), 'No conversations match',
+          elsewhere ? found.length + ' match under another filter. Try <b>All</b>.' : 'Try different words.')
+      : emptyState(icon('check'), 'Nothing here', 'No conversation matches this filter.')) + '</div>';
     return;
   }
-  el.innerHTML = bar + shown.map(convoCard).join('');
+  rowsEl.innerHTML = shown.map(convoCard).join('');
 }
 
 function convoCard(c) {
@@ -2604,7 +2712,7 @@ function convoCard(c) {
   const draft = c.draft
     ? '<div class="thread-draft"><div class="sender">' + icon('pen') + 'Sellbird drafted a reply · waiting for you</div>' +
       '<div class="td-body">' + escHtml(c.draft.body) + '</div>' +
-      '<button class="btn btn-primary btn-sm" onclick="goTab(\'outbox\')">Review in Outbox' + icon('arrow') + '</button></div>'
+      '<button class="btn btn-primary btn-sm" onclick="reviewDraft(' + jsq(c.draft.id) + ')">Review in Outbox' + icon('arrow') + '</button></div>'
     : '';
   const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.company || 'Unknown';
   const stage = own(STAGE_LABELS, c.stage) ? '<span class="tag">' + STAGE_LABELS[c.stage] + '</span>' : '';
