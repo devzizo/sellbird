@@ -199,6 +199,15 @@ minor versions can still change behaviour.
 
 ### Fixed
 
+- **Company names fit to put in an email.** Names come from page titles and
+  URLs, and some reached drafts as "https://www.example.co.uk/'s badge",
+  "Welcome to Example Academy", "Example FC l Ladies l" or "Example Co"
+  (a domain-derived name that took `.co.uk`'s "co" for a word). Every name
+  is now cleaned as it is stored, whichever path found it: a URL becomes the
+  name it spells, "Welcome to" goes, a title is cut at its separator
+  (including a lone "l" typed as a pipe) to the part the domain backs up,
+  and trailing "!" or ":" is dropped. Domain-derived names now skip
+  second-level suffixes (`.co.uk`, `.ac.uk`, `.sch.uk`, ...).
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 
